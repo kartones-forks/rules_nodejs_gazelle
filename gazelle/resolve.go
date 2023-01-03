@@ -85,6 +85,8 @@ var BUILTINS = map[string]bool{
 // returned, including an empty slice, the rule will be indexed.
 func (lang *JS) Imports(c *config.Config, r *rule.Rule, f *rule.File) []resolve.ImportSpec {
 
+	log.Print("Extension.Imports: ", r.Kind())
+
 	srcs := r.AttrStrings("srcs")
 
 	isModule := false
@@ -139,6 +141,9 @@ func (*JS) Embeds(r *rule.Rule, from label.Label) []label.Label {
 // the appropriate language-specific equivalent) for each import according to
 // language-specific rules and heuristics.
 func (lang *JS) Resolve(c *config.Config, ix *resolve.RuleIndex, rc *repo.RemoteCache, r *rule.Rule, _imports interface{}, from label.Label) {
+
+	log.Print("Extension.Resolve: ", r.Kind())
+	log.Print("Config: ", c.KindMap)
 
 	jsConfigs := c.Exts[languageName].(JsConfigs)
 	jsConfig := jsConfigs[from.Pkg]
@@ -241,6 +246,8 @@ func (lang *JS) Resolve(c *config.Config, ix *resolve.RuleIndex, rc *repo.Remote
 
 func (lang *JS) resolveWalkParents(name string, depSet map[string]bool, dataSet map[string]bool, c *config.Config, ix *resolve.RuleIndex, rc *repo.RemoteCache, r *rule.Rule, from label.Label) {
 
+	log.Print("Extension.resolveWalkParents: ", r.Kind())
+
 	jsConfigs := c.Exts[languageName].(JsConfigs)
 	jsConfig := jsConfigs[from.Pkg]
 
@@ -312,7 +319,7 @@ func (lang *JS) resolveWalkParents(name string, depSet map[string]bool, dataSet 
 
 }
 
-//  https://nodejs.org/api/modules.html#modules_all_together
+// https://nodejs.org/api/modules.html#modules_all_together
 func (lang *JS) isNpmDependency(imp string, jsConfig *JsConfig) bool {
 
 	// These prefixes cannot be NPM dependencies

@@ -51,6 +51,11 @@ var jestRules = rule.LoadInfo{
 }
 var managedRulesSet map[string]bool
 
+var ruleIdsSet map[string]string
+
+// To only configure once the kind mappings
+var mappingsConfigured = false
+
 func init() {
 	managedRulesSet = make(map[string]bool)
 	for _, rule := range localRules.Symbols {
@@ -61,6 +66,17 @@ func init() {
 	}
 	for _, rule := range jestRules.Symbols {
 		managedRulesSet[rule] = true
+	}
+
+	ruleIdsSet = make(map[string]string)
+	// fill first with basic rules
+	for _, ruleId := range []string{"JS_LIBRARY", "TS_DEFINITION", "TS_PROJECT", "JEST_TEST", "WEB_ASSET", "WEB_ASSETS"} {
+		var rule = strings.ToLower(ruleId)
+		if _, ok := managedRulesSet[rule]; ok {
+			ruleIdsSet[ruleId] = rule
+		} else {
+			log.Fatal("rule '", rule, "' for ruleId '", ruleId, "' not found at managedRules")
+		}
 	}
 }
 
@@ -85,7 +101,6 @@ func (lang *JS) Loads() []rule.LoadInfo {
 //
 // A GenerateResult struct is returned. Optional fields may be added to this
 // type in the future.
-//
 func (lang *JS) GenerateRules(args language.GenerateArgs) language.GenerateResult {
 
 	jsConfigs := args.Config.Exts[languageName].(JsConfigs)
@@ -98,11 +113,33 @@ func (lang *JS) GenerateRules(args language.GenerateArgs) language.GenerateResul
 
 	existingRules := make(map[string]*rule.Rule)
 
+	if !mappingsConfigured {
+		// HACK: we're mutating the set, this should happen at config level instead
+		inverseKindMap := inverseKindMap(args.Config)
+		for kind_name, _ := range inverseKindMap {
+			managedRulesSet[kind_name] = true
+		}
+
+		for kind_from, data := range args.Config.KindMap {
+			var ruleId = strings.ToUpper(kind_from)
+			if _, ok := ruleIdsSet[ruleId]; ok {
+				ruleIdsSet[ruleId] = data.KindName
+			}
+		}
+
+		mappingsConfigured = true
+
+		log.Print("managedRules: ", managedRulesSet)
+		log.Print("Config.KindMap: ", args.Config.KindMap)
+		log.Print("ruleIdsSet: ", ruleIdsSet)
+	}
+
 	// BUILD file exists?
 	if BUILD := args.File; BUILD != nil {
 		// For each existing rule
 		for _, r := range BUILD.Rules {
 			if _, ok := managedRulesSet[r.Kind()]; !ok {
+				log.Print("not managed rule: ", r.Kind())
 				// not a managed rule
 				continue
 			}
@@ -136,7 +173,7 @@ func (lang *JS) GenerateRules(args language.GenerateArgs) language.GenerateResul
 		// TS DEFINITIONS ".d.ts"
 		match := tsDefsExtensionsPattern.FindStringSubmatch(baseName)
 		if len(match) > 0 {
-			r := rule.NewRule(getKind(args.Config, "ts_definition"), strings.TrimSuffix(baseName, match[0])+".d")
+			r := rule.NewRule(getKind(args.Config, ruleIdsSet["TS_DEFINITION"]), strings.TrimSuffix(baseName, match[0])+".d")
 			r.SetAttr("srcs", []string{baseName})
 			if len(jsConfig.Visibility.Labels) > 0 {
 				r.SetAttr("visibility", jsConfig.Visibility.Labels)
@@ -151,7 +188,7 @@ func (lang *JS) GenerateRules(args language.GenerateArgs) language.GenerateResul
 		match = append(jsTestExtensionsPattern.FindStringSubmatch(baseName), tsTestExtensionsPattern.FindStringSubmatch(baseName)...)
 		if len(match) > 0 {
 			i, r := lang.makeTestRule(testRuleArgs{
-				ruleType:  getKind(args.Config, "jest_test"),
+				ruleType:  getKind(args.Config, ruleIdsSet["JEST_TEST"]),
 				extension: match[0],
 				filePath:  filePath,
 				baseName:  baseName,
@@ -188,7 +225,6 @@ func (lang *JS) GenerateRules(args language.GenerateArgs) language.GenerateResul
 				continue
 			}
 		}
-		
 	}
 
 	if isModule && len(tsSources) > 0 && len(jsSources) > 0 {
@@ -236,9 +272,9 @@ func (lang *JS) GenerateRules(args language.GenerateArgs) language.GenerateResul
 	}
 
 	// add ts_project rules
-	genRules(tsSources, tsImports, len(jsSources) > 0, "ts_project")
+	genRules(tsSources, tsImports, len(jsSources) > 0, ruleIdsSet["TS_PROJECT"])
 	// add js_library rules
-	genRules(jsSources, jsImports, false, "js_library")
+	genRules(jsSources, jsImports, false, ruleIdsSet["JS_LIBRARY"])
 
 	// read webAssetsSet to list
 	webAssets := make([]string, 0, len(webAssetsSet))
@@ -251,7 +287,7 @@ func (lang *JS) GenerateRules(args language.GenerateArgs) language.GenerateResul
 		if jsConfig.AggregateWebAssets {
 			// aggregate rule
 			name := "assets"
-			r := rule.NewRule(getKind(args.Config, "web_assets"), name)
+			r := rule.NewRule(getKind(args.Config, ruleIdsSet["WEB_ASSETS"]), name)
 			r.SetAttr("srcs", webAssets)
 			if len(jsConfig.Visibility.Labels) > 0 {
 				r.SetAttr("visibility", jsConfig.Visibility.Labels)
@@ -267,7 +303,7 @@ func (lang *JS) GenerateRules(args language.GenerateArgs) language.GenerateResul
 		} else {
 			// add as singletons
 			rules := lang.makeRules(ruleArgs{
-				ruleType: getKind(args.Config, "web_asset"),
+				ruleType: getKind(args.Config, ruleIdsSet["WEB_ASSET"]),
 				srcs:     webAssets,
 				trimExt:  false, //shadow the original file name
 			}, jsConfig)
@@ -290,7 +326,7 @@ func (lang *JS) GenerateRules(args language.GenerateArgs) language.GenerateResul
 			JSRootDeps = append(JSRootDeps, fqName)
 		}
 		name := "all_assets"
-		r := rule.NewRule(getKind(args.Config, "web_assets"), name)
+		r := rule.NewRule(getKind(args.Config, ruleIdsSet["WEB_ASSETS"]), name)
 		r.SetAttr("srcs", JSRootDeps)
 
 		generatedRules = append(generatedRules, r)
@@ -334,7 +370,7 @@ func (lang *JS) GenerateRules(args language.GenerateArgs) language.GenerateResul
 // called before the file is indexed. Unless c.ShouldFix is true, fixes
 // that delete or rename rules should not be performed.
 func (*JS) Fix(c *config.Config, f *rule.File) {
-	
+
 	jsConfigs := c.Exts[languageName].(JsConfigs)
 	jsConfig := jsConfigs[f.Pkg]
 
@@ -511,7 +547,7 @@ func readFileAndParse(filePath string) *imports {
 	// If this file is a React component, always add react as dependency as the file could be using native
 	// JSX transpilation from React package that doesn't need the "import React" statement
 	if isReactFile(filePath) {
-		fileImports.set["react"] = true 
+		fileImports.set["react"] = true
 	}
 
 	data, err := ioutil.ReadFile(filePath)
@@ -565,11 +601,30 @@ func aggregateImports(imps []imports) *imports {
 	return &aggregatedImports
 }
 
+func inverseKindMap(c *config.Config) map[string]string {
+	inverseKindMap := make(map[string]string)
+
+	for name_from, kind_data := range c.KindMap {
+		inverseKindMap[kind_data.KindName] = name_from
+	}
+
+	return inverseKindMap
+}
+
+func inverseKind(c *config.Config, kind_from string) string {
+	inverseKindMap := inverseKindMap(c)
+
+	if kind_name, ok := inverseKindMap[kind_from]; ok {
+		return kind_name
+	}
+
+	return kind_from
+}
+
 func getKind(c *config.Config, kind_name string) string {
 	// Extract kind_name from KindMap
 	if kind, ok := c.KindMap[kind_name]; ok {
 		return kind.KindName
-
 	}
 	return kind_name
 }
